@@ -19,14 +19,13 @@ import {
 } from "@nextui-org/react";
 import { useEffect, useRef, useState } from "react";
 import { usePrevious } from "ahooks";
-
 import InteractiveAvatarTextInput from "./InteractiveAvatarTextInput";
 import { AVATARS, STT_LANGUAGE_LIST } from "@/app/lib/constants";
 
 export default function InteractiveAvatar() {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isLoadingRepeat, setIsLoadingRepeat] = useState(false);
-  const [stream, setStream] = useState<MediaStream>();
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const [debug, setDebug] = useState<string>();
   const [knowledgeId, setKnowledgeId] = useState<string>("");
   const [avatarId, setAvatarId] = useState<string>("");
@@ -48,12 +47,11 @@ export default function InteractiveAvatar() {
         method: "POST",
       });
       const token = await response.text();
-      console.log("Access Token:", token);
       return token;
     } catch (error) {
       console.error("Error fetching access token:", error);
+      return "";
     }
-    return "";
   }
 
   // Start the avatar session
@@ -61,43 +59,42 @@ export default function InteractiveAvatar() {
     setIsLoadingSession(true);
     const newToken = await fetchAccessToken();
 
-    // Initialize the avatar
     avatar.current = new StreamingAvatar({
       token: newToken,
       basePath: baseApiUrl(),
     });
 
-    // Set up event listeners
     avatar.current.on(StreamingEvents.AVATAR_START_TALKING, (e) => {
       console.log("Avatar started talking", e);
     });
+
     avatar.current.on(StreamingEvents.AVATAR_STOP_TALKING, (e) => {
       console.log("Avatar stopped talking", e);
     });
+
     avatar.current.on(StreamingEvents.STREAM_DISCONNECTED, () => {
       console.log("Stream disconnected");
       endSession();
     });
+
     avatar.current?.on(StreamingEvents.STREAM_READY, (event) => {
-      console.log(">>>>> Stream ready:", event.detail);
+      console.log("Stream ready:", event.detail);
       setStream(event.detail);
     });
 
     try {
-      // Start the avatar session
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
         knowledgeId: knowledgeId,
         voice: {
-          rate: 1.5, // Speech rate
-          emotion: "excited", // Voice emotion
+          rate: 1.5,
+          emotion: "excited",
         },
         language: language,
         disableIdleTimeout: true,
       });
-
-      setData(res); // Set the response data
+      setData(res);
     } catch (error) {
       console.error("Error starting avatar session:", error);
     } finally {
@@ -106,18 +103,23 @@ export default function InteractiveAvatar() {
   }
 
   // Handle text submission to the avatar
-  async function handleSpeak() {
+  async function handleSpeak(textToSpeak: string) {
     setIsLoadingRepeat(true);
     if (!avatar.current) {
       setDebug("Avatar API not initialized");
       return;
     }
-    await avatar.current
-      .speak({ text: text, taskType: TaskType.REPEAT, taskMode: TaskMode.SYNC })
-      .catch((e) => {
-        setDebug(e.message);
+    try {
+      await avatar.current.speak({
+        text: textToSpeak,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC,
       });
-    setIsLoadingRepeat(false);
+    } catch (e: any) {
+      setDebug(e.message);
+    } finally {
+      setIsLoadingRepeat(false);
+    }
   }
 
   // Interrupt the avatar's current task
@@ -126,15 +128,21 @@ export default function InteractiveAvatar() {
       setDebug("Avatar API not initialized");
       return;
     }
-    await avatar.current.interrupt().catch((e) => {
+    try {
+      await avatar.current.interrupt();
+    } catch (e: any) {
       setDebug(e.message);
-    });
+    }
   }
 
   // End the avatar session
   async function endSession() {
-    await avatar.current?.stopAvatar();
-    setStream(undefined);
+    try {
+      await avatar.current?.stopAvatar();
+    } catch (e: any) {
+      console.error("Error ending session:", e);
+    }
+    setStream(null);
   }
 
   // Track previous text input
@@ -143,7 +151,7 @@ export default function InteractiveAvatar() {
     if (!previousText && text) {
       avatar.current?.startListening();
     } else if (previousText && !text) {
-      avatar?.current?.stopListening();
+      avatar.current?.stopListening();
     }
   }, [text, previousText]);
 
@@ -159,11 +167,11 @@ export default function InteractiveAvatar() {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream;
       mediaStream.current.onloadedmetadata = () => {
-        mediaStream.current!.play();
+        mediaStream.current?.play();
         setDebug("Playing");
       };
     }
-  }, [mediaStream, stream]);
+  }, [stream]);
 
   return (
     <div className="w-full flex flex-col gap-4">
@@ -266,7 +274,6 @@ export default function InteractiveAvatar() {
         </CardBody>
         <Divider />
         <CardFooter className="flex flex-col gap-3 relative">
-          {/* Only Text Mode Input */}
           <div className="w-full flex relative">
             <InteractiveAvatarTextInput
               disabled={!stream}
